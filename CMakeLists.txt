@@ -45,7 +45,6 @@ set(resolv_sources
 	res_send.c
 	res_sendsigned.c
 	res_update.c
-	dnsinfo/dnsinfo.c
 )
 
 set(DYLIB_COMPAT_VERSION "1.0.0")
@@ -64,6 +63,7 @@ add_circular(resolv-darwin FAT
 		system_kernel
 		system_dnssd
 		system_notify
+		system_configuration
 		system_dyld
 )
 set_target_properties(resolv-darwin PROPERTIES OUTPUT_NAME "resolv.9")
