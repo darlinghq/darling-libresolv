@@ -45,7 +45,6 @@ set(resolv_sources
 	res_send.c
 	res_sendsigned.c
 	res_update.c
-	dnsinfo/dnsinfo.c
 )
 
 set(DYLIB_COMPAT_VERSION "1.0.0")
