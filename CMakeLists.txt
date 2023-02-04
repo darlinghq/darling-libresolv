@@ -63,6 +63,7 @@ add_circular(resolv-darwin FAT
 		system_kernel
 		system_dnssd
 		system_notify
+		system_configuration
 		system_dyld
 )
 set_target_properties(resolv-darwin PROPERTIES OUTPUT_NAME "resolv.9")
