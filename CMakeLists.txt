@@ -65,6 +65,7 @@ add_circular(resolv-darwin FAT
 		system_notify
 		system_configuration
 		system_dyld
+		platform
 )
 set_target_properties(resolv-darwin PROPERTIES OUTPUT_NAME "resolv.9")
 
