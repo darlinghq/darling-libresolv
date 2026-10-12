@@ -959,6 +959,24 @@ vc_same_ns:
 			return DNS_RES_STATUS_CONNECTION_REFUSED;
 		}
 
+#ifdef DARLING
+		/*
+		 * The TCP (VC) reply read below is a plain blocking read() with no
+		 * deadline. If the server is slow or drops the connection without
+		 * RST, it blocks forever and the whole getaddrinfo() caller hangs.
+		 * Bound it so a stalled server falls through to the normal
+		 * retry/next-server path.
+		 */
+		{
+			struct timeval tv;
+			tv.tv_sec = statp->retrans > 0 ? statp->retrans : RES_TIMEOUT;
+			if (tv.tv_sec > 30) tv.tv_sec = 30;
+			tv.tv_usec = 0;
+			setsockopt(statp->_vcsock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+			setsockopt(statp->_vcsock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+		}
+#endif
+
 		statp->_flags |= RES_F_VC;
 	}
 
