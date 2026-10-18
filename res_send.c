@@ -961,17 +961,9 @@ vc_same_ns:
 
 #ifdef DARLING
 		/*
-		 * The TCP (VC) reply read below is a plain blocking read() with no
-		 * deadline. If the server is slow or drops the connection without
-		 * RST, it blocks forever and the whole getaddrinfo() caller hangs.
-		 * Bound it so a stalled server falls through to the next server.
-		 *
-		 * The limit applies to each read() call, not to the whole query: a
-		 * server that keeps sending just inside it can still stretch a reply.
-		 * connect() above stays unbounded. There is no SO_SNDTIMEO: the query
-		 * is at most 514 bytes written to a fresh socket, which cannot block
-		 * on the send buffer, and Darling passes that option through to Linux
-		 * without converting the Darwin struct timeval.
+		 * Bound the blocking reply read so a stalled server falls through to
+		 * the next one. Per read() call, not per query. No SO_SNDTIMEO: Darling
+		 * passes it to Linux without converting the Darwin timeval.
 		 */
 		{
 			struct timeval tv;
