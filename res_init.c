@@ -578,12 +578,6 @@ res_vinit_from_file(res_state statp, int preinit, char *resconf_file)
 		statp->nsaddr.sin_len = sizeof(struct sockaddr_in);
 #endif
 		statp->nscount = 1;
-
-		/*
-		 * Force loopback queries to use TCP
-		 * so we don't take a timeout if named isn't running.
-		 */
-		statp->options |= RES_USEVC;
 	}
 	
 	statp->ndots = 1;
@@ -946,6 +940,12 @@ res_vinit_from_file(res_state statp, int preinit, char *resconf_file)
 #ifdef NO_RESOLV_CONF
 	if(nserv == 0) nserv = get_nameservers(statp);
 #endif
+
+	/*
+	 * Force loopback queries to use TCP
+	 * so we don't take a timeout if named isn't running.
+	 */
+	if ((isresdefault != 0) && (nserv == 0)) statp->options |= RES_USEVC;
 
 	if (isresdefault != 0)
 	{
