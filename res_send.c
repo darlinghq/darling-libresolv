@@ -132,6 +132,9 @@ static const char rcsid[] = "$Id: res_send.c,v 1.1 2006/03/01 19:01:38 majka Exp
 #include "res_debug.h"
 #include "res_private.h"
 #include <sys/fcntl.h>
+#ifdef DARLING
+#include <poll.h>
+#endif
 
 #define EXT(res) ((res)->_u._ext)
 
@@ -883,6 +886,61 @@ get_nsaddr(res_state statp, size_t n)
 	}
 }
 
+#ifdef DARLING
+/*
+ * Seconds to wait on the TCP connect and per reply read: the resolver retrans value, capped.
+ */
+static int
+vc_timeout_secs(res_state statp)
+{
+	int secs = statp->retrans > 0 ? statp->retrans : RES_TIMEOUT;
+	if (secs > RES_MAXRETRANS) secs = RES_MAXRETRANS;
+	return secs;
+}
+
+/*
+ * connect() with a bound: a server that drops the SYN would otherwise block for the kernel's
+ * SYN retry schedule (about two minutes). The socket is blocking again on return.
+ * Returns 0, or -1 with errno set (ETIMEDOUT when the bound expired).
+ */
+static int
+connect_bounded(int fd, const struct sockaddr *sa, int salen, int secs)
+{
+	int flags = fcntl(fd, F_GETFL, 0);
+	if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
+
+	int rc = connect(fd, sa, salen);
+	if (rc < 0 && errno == EINPROGRESS)
+	{
+		struct pollfd pfd;
+		pfd.fd = fd;
+		pfd.events = POLLOUT;
+		pfd.revents = 0;
+
+		int n;
+		do n = poll(&pfd, 1, secs * 1000); while (n < 0 && errno == EINTR);
+		if (n == 0) errno = ETIMEDOUT;
+		if (n > 0)
+		{
+			int err = 0;
+			socklen_t elen = sizeof(err);
+			if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen) < 0) n = -1;
+			else if (err != 0) { errno = err; n = -1; }
+		}
+		rc = (n > 0) ? 0 : -1;
+	}
+
+	if (rc < 0)
+	{
+		int saved = errno;
+		fcntl(fd, F_SETFL, flags);
+		errno = saved;
+		return -1;
+	}
+	return fcntl(fd, F_SETFL, flags);
+}
+#endif
+
 static int
 send_vc(res_state statp, const u_char *buf, int buflen, u_char *ans, int *anssiz, int *terrno, int ns, struct sockaddr *from, int *fromlen, int notify_token)
 {
@@ -951,7 +1009,11 @@ vc_same_ns:
 		}
 
 		errno = 0;
+#ifdef DARLING
+		if (connect_bounded(statp->_vcsock, nsap, nsaplen, vc_timeout_secs(statp)) < 0)
+#else
 		if (connect(statp->_vcsock, nsap, nsaplen) < 0)
+#endif
 		{
 			*terrno = errno;
 			Aerror(statp, stderr, "connect(vc)", errno, nsap, nsaplen);
@@ -968,8 +1030,7 @@ vc_same_ns:
 		{
 			struct timeval tv;
 			memset(&tv, 0, sizeof(tv));
-			tv.tv_sec = statp->retrans > 0 ? statp->retrans : RES_TIMEOUT;
-			if (tv.tv_sec > RES_MAXRETRANS) tv.tv_sec = RES_MAXRETRANS;
+			tv.tv_sec = vc_timeout_secs(statp);
 			if (setsockopt(statp->_vcsock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
 			{
 				*terrno = errno;
