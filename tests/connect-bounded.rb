@@ -1,5 +1,7 @@
 # Run the real connect_bounded from res_send.c against loopback: a listener whose accept queue
-# is full drops further SYNs, as a blackholed server does.
+# is full drops further SYNs, as a blackholed server does. It runs twice: with the host connect(), and
+# with a shim that copies Darling's connect emulation (xnu emulation/src/xnu_syscall/bsd/impl/network/
+# connect.c): clear O_NONBLOCK around the Linux connect() and restore it, so a guest never sees EINPROGRESS.
 # Usage: ruby tests/connect-bounded.rb [path/to/res_send.c]
 require 'tmpdir'
 path = ARGV[0] || File.expand_path('../res_send.c', __dir__)
@@ -10,11 +12,27 @@ program = <<~C
   #include <fcntl.h>
   #include <poll.h>
   #include <stdio.h>
+  #include <string.h>
+  #include <sys/time.h>
   #include <sys/socket.h>
   #include <time.h>
   #include <unistd.h>
+  #ifdef EMULATE_DARLING_CONNECT
+  static int emu_connect(int fd, const struct sockaddr *sa, socklen_t len) {
+      int flags = fcntl(fd, F_GETFL, 0);
+      int was_nonblock = flags >= 0 && (flags & O_NONBLOCK);
+      if (was_nonblock) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+      int rc = connect(fd, sa, len);
+      int saved = errno;
+      if (was_nonblock) fcntl(fd, F_SETFL, flags);
+      errno = saved;
+      return rc;
+  }
+  #define connect(a, b, c) emu_connect(a, b, c)
+  #endif
   static int
   #{body}
+  #undef connect
   static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
   static int sock(void) { return socket(AF_INET, SOCK_STREAM, 0); }
   int main(void) {
@@ -42,8 +60,11 @@ program = <<~C
   }
 C
 Dir.mktmpdir('connect-bounded') do |dir|
-  src = File.join(dir, 'probe.c'); exe = File.join(dir, 'probe')
+  src = File.join(dir, 'probe.c')
   File.write(src, program)
-  abort 'compile failed' unless system(ENV.fetch('CC', 'clang'), '-O1', '-g', '-Wall', src, '-o', exe)
-  abort 'connect_bounded regression' unless system('timeout', '20', exe, rlimit_core: 0)
+  [[], ['-DEMULATE_DARLING_CONNECT']].each do |flags|
+    exe = File.join(dir, "probe#{flags.size}")
+    abort 'compile failed' unless system(ENV.fetch('CC', 'clang'), '-O1', '-g', '-Wall', *flags, src, '-o', exe)
+    abort "connect_bounded regression (#{flags.empty? ? 'host connect' : 'Darling connect emulation'})" unless system('timeout', '20', exe, rlimit_core: 0)
+  end
 end

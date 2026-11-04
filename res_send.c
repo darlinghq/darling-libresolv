@@ -900,44 +900,34 @@ vc_timeout_secs(res_state statp)
 
 /*
  * connect() with a bound: a server that drops the SYN would otherwise block for the kernel's
- * SYN retry schedule (about two minutes). The socket is blocking again on return.
- * Returns 0, or -1 with errno set (ETIMEDOUT when the bound expired).
+ * SYN retry schedule (about two minutes). The bound is SO_SNDTIMEO on a blocking connect:
+ * Darling's connect emulation clears O_NONBLOCK around the Linux connect(), so a non-blocking
+ * connect followed by poll() would never reach the poll. Linux reports an expired send timeout
+ * as EINPROGRESS (EALREADY on a restart after EINTR); both become ETIMEDOUT. The send timeout is
+ * cleared on return. Returns 0, or -1 with errno set.
  */
 static int
 connect_bounded(int fd, const struct sockaddr *sa, int salen, int secs)
 {
-	int flags = fcntl(fd, F_GETFL, 0);
-	if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
+	struct timeval tv;
+	memset(&tv, 0, sizeof(tv));
+	tv.tv_sec = secs;
+	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) return -1;
 
-	int rc = connect(fd, sa, salen);
-	if (rc < 0 && errno == EINPROGRESS)
+	int rc, err;
+	do
 	{
-		struct pollfd pfd;
-		pfd.fd = fd;
-		pfd.events = POLLOUT;
-		pfd.revents = 0;
+		rc = connect(fd, sa, salen);
+		err = errno;
+	} while (rc < 0 && err == EINTR);
 
-		int n;
-		do n = poll(&pfd, 1, secs * 1000); while (n < 0 && errno == EINTR);
-		if (n == 0) errno = ETIMEDOUT;
-		if (n > 0)
-		{
-			int err = 0;
-			socklen_t elen = sizeof(err);
-			if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen) < 0) n = -1;
-			else if (err != 0) { errno = err; n = -1; }
-		}
-		rc = (n > 0) ? 0 : -1;
-	}
+	if (rc < 0 && err == EISCONN) rc = 0;
+	if (rc < 0 && (err == EINPROGRESS || err == EALREADY || err == EAGAIN)) err = ETIMEDOUT;
 
-	if (rc < 0)
-	{
-		int saved = errno;
-		fcntl(fd, F_SETFL, flags);
-		errno = saved;
-		return -1;
-	}
-	return fcntl(fd, F_SETFL, flags);
+	memset(&tv, 0, sizeof(tv));
+	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+	errno = err;
+	return rc < 0 ? -1 : 0;
 }
 #endif
 
@@ -1024,8 +1014,7 @@ vc_same_ns:
 #ifdef DARLING
 		/*
 		 * Bound the blocking reply read so a stalled server falls through to
-		 * the next one. Per read() call, not per query. No SO_SNDTIMEO: Darling
-		 * passes it to Linux without converting the Darwin timeval.
+		 * the next one. Per read() call, not per query.
 		 */
 		{
 			struct timeval tv;
