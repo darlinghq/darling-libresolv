@@ -132,9 +132,6 @@ static const char rcsid[] = "$Id: res_send.c,v 1.1 2006/03/01 19:01:38 majka Exp
 #include "res_debug.h"
 #include "res_private.h"
 #include <sys/fcntl.h>
-#ifdef DARLING
-#include <poll.h>
-#endif
 
 #define EXT(res) ((res)->_u._ext)
 
